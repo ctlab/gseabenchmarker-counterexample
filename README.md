@@ -11,4 +11,6 @@ We demonstrate this by showing that a baseline method that simply orders genes s
 size significantly outperforms all other considered methods, including frequently used
 in practice ORA and GSEA methods.
 
+The built vignette is available at https://ctlab.github.io/gseabenchmarker-counterexample/main.html
+
 The code and data is based on https://github.com/waldronlab/GSEABenchmarking repository.
