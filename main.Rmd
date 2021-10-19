@@ -1,0 +1,158 @@
+---
+title: "On benchmarking gene set enrichment analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=FALSE)
+```
+
+## Introduction
+
+Systematic evaluation of gene set enrichment analysis methods 
+is a much needed but challenging task. 
+Recently Geistlinger and colleagues presented a framework
+[GSEABenchmarkeR](https://bioconductor.org/packages/GSEABenchmarkeR)
+for extensible and reproducible gene set enrichment benchmarking. 
+Here we show that the MalaCards-based phenotype relevance score,
+one of the key framework's component,
+turns out to be a poor metric for comparing quality of enrichment results.
+We demonstrate this by showing that a baseline method that simply orders genes sets by their 
+size significantly outperforms all other considered methods, including frequently used
+in practice ORA and GSEA methods.
+
+
+### Loading libraries
+
+```{r message=FALSE}
+library(GSEABenchmarkeR)
+library(EnrichmentBrowser)
+library(data.table)
+library(reshape2)
+library(ggplot2)
+library(ggpubr)
+
+source("methods/utils.R")
+```
+
+### Microarray and TCGA ids
+
+```{r message=FALSE}
+geo2kegg <- loadEData("geo2kegg")
+ma.ids <- names(geo2kegg)
+
+rseq.ids <- c("BLCA", "BRCA", "COAD", "HNSC", "KICH", 
+              "KIRC", "KIRP", "LIHC", "LUAD", "LUSC", 
+              "PRAD", "READ", "STAD", "THCA", "UCEC")
+```
+
+### Reading rankings from the article
+
+```{r}
+ea.methods <- sbeaMethods()[1:10]
+
+rseq.kegg.ranks <- readResults("inpdata/TCGA/GSE62944_matched_vst/kegg/", rseq.ids,
+                               methods = ea.methods, type="ranking")
+rseq.go.ranks <- readResults("inpdata/TCGA/GSE62944_matched_vst/gobp/", rseq.ids,
+                               methods = ea.methods, type="ranking")
+
+ma.kegg.ranks <- readResults("inpdata/GEO2KEGG/kegg/perm1k/", ma.ids, 
+                             methods = ea.methods, type="ranking")
+ma.go.ranks <- readResults("inpdata/GEO2KEGG/go_bp/", ma.ids, 
+                             methods = ea.methods, type="ranking")
+```
+
+## Benchmarking
+
+Here we introduce a baseline enrichment method `GSS`, which ranks gene sets based only on their size.
+
+### Adding geneset-size based ranking
+
+```{r}
+gss.rseq.kegg <- lapply(rseq.ids, function(rseqId){
+    oraRanking <- as.data.table(rseq.kegg.ranks$ora[[rseqId]])
+    gssRanking <- oraRanking[, .(GENE.SET, NR.GENES)]
+    gssRanking[, PVAL := 1 / NR.GENES]
+    return(as.data.frame(gssRanking))
+})
+names(gss.rseq.kegg) <- rseq.ids
+
+gss.rseq.go <- lapply(rseq.ids, function(rseqId){
+    oraRanking <- as.data.table(rseq.go.ranks$ora[[rseqId]])
+    gssRanking <- oraRanking[, .(GENE.SET, NR.GENES)]
+    gssRanking[, PVAL := 1 / NR.GENES]
+    return(as.data.frame(gssRanking))
+})
+names(gss.rseq.go) <- rseq.ids
+
+gss.ma.kegg <- lapply(ma.ids, function(maId){
+    oraRanking <- as.data.table(ma.kegg.ranks$ora[[maId]])
+    gssRanking <- oraRanking[, .(GENE.SET, NR.GENES)]
+    gssRanking[, PVAL := 1 / NR.GENES]
+    return(as.data.frame(gssRanking))
+})
+names(gss.ma.kegg) <- ma.ids
+
+gss.ma.go <- lapply(ma.ids, function(maId){
+    oraRanking <- as.data.table(ma.go.ranks$ora[[maId]])
+    gssRanking <- oraRanking[, .(GENE.SET, NR.GENES)]
+    gssRanking[, PVAL := 1 / NR.GENES]
+    return(as.data.frame(gssRanking))
+})
+names(gss.ma.go) <- ma.ids
+
+ma.kegg.ranks$gss <- gss.ma.kegg
+ma.go.ranks$gss <- gss.ma.go
+rseq.kegg.ranks$gss <- gss.rseq.kegg
+rseq.go.ranks$gss <- gss.rseq.go
+```
+
+### Reading mala cards
+
+```{r}
+data.dir <- system.file("extdata", package="GSEABenchmarkeR")
+mala.kegg.file <- file.path(data.dir, "malacards", "KEGG.rds")
+mala.go.file <- file.path(data.dir, "malacards", "GO_BP.rds")
+mala.kegg <- readRDS(mala.kegg.file)
+mala.go <- readRDS(mala.go.file)
+
+d2d.file <- file.path(data.dir, "malacards", "GseId2Disease.txt")
+d2d.map <- readDataId2diseaseCodeMap(d2d.file)
+
+d2d.tcga <- rseq.ids
+names(d2d.tcga) <- rseq.ids
+```
+
+### Evaluating relative scores
+
+```{r}
+ma.kegg.rel.sets <- evalRelevance(ma.kegg.ranks, mala.kegg, d2d.map)
+ma.go.rel.sets <- evalRelevance(ma.go.ranks, mala.go, d2d.map)
+
+rseq.kegg.rel.sets <- evalRelevance(rseq.kegg.ranks, mala.kegg, d2d.tcga)
+rseq.go.rel.sets <- evalRelevance(rseq.go.ranks, mala.go, d2d.tcga)
+```
+
+### Plot results
+
+```{r}
+facetplot(ma.kegg.rel.sets, ma.go.rel.sets, 
+          rseq.kegg.rel.sets, rseq.go.rel.sets, 
+          ylab="% optimal relevance score", vline = NA)
+```
+
+## Overall difference between `GSS` and other methods
+
+```{r}
+vapply(setdiff(ea.methods, "gss"), 
+        function(m) testMethods("gss", m), 
+        numeric(5))
+```
+
+
+## Session info
+
+```{r}
+sessionInfo()
+```
